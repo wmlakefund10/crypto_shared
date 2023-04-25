@@ -8,6 +8,7 @@ from email.mime.base import MIMEBase
 from email.mime.image import MIMEImage
 from email.mime.text import MIMEText
 import datetime as dt
+import time
 
 def sendemail(emailto,
               subject,

@@ -111,7 +111,6 @@ def query_histdata_v5(category, symbol, interval, sdate=None):
             sdate = '2020-01-01'
     if sdate is None:
         return pd.DataFrame()
-    starttime = dt.datetime.strptime(sdate, '%Y-%m-%d')
     df_list = []
     last_second = utility.dt_to_millsec(sdate)
     while True:
