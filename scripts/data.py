@@ -304,9 +304,7 @@ class Public_Trading_History(object):
                     current_new.to_parquet(raw_data_file_today, engine='fastparquet', append=True)
                 self.last_records[name] = current
     
-    def pulling(self, max_attempts=5): 
-        self._init_pull()
-        self._live_pull()       
+    def pulling(self, max_attempts=5):       
         attempts = 0
         while attempts < max_attempts:
             try:
@@ -319,7 +317,6 @@ class Public_Trading_History(object):
                 print('Init Pull {} try failed.'.format(attempts))
         
         attempts = 0
-        self._live_pull()
         while attempts < max_attempts:
             try:
                 print('Live pulling......')
