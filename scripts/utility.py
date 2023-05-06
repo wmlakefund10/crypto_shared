@@ -12,49 +12,56 @@ import time
 
 def sendemail(emailto,
               subject,
+              text="",
+              html=None,
               emailfrom="wmlakefund.noreply@gmail.com",
               fileToSend=None,
               username="wmlakefund.noreply@gmail.com",
               password="wnxdtjhkdtromarz"):
-    msg = MIMEMultipart()
+    msg = MIMEMultipart("alternative")
     msg["From"] = emailfrom
     msg["To"] = emailto
     msg["Subject"] = subject
     msg.preamble = subject
-
-    ctype, encoding = mimetypes.guess_type(fileToSend)
-    if ctype is None or encoding is not None:
-        ctype = "application/octet-stream"
-    maintype, subtype = ctype.split("/", 1)
-
-    if maintype == "text":
-        fp = open(fileToSend)
-        # Note: we should handle calculating the charset
-        attachment = MIMEText(fp.read(), _subtype=subtype)
-        fp.close()
-    elif maintype == "image":
-        fp = open(fileToSend, "rb")
-        attachment = MIMEImage(fp.read(), _subtype=subtype)
-        fp.close()
-    elif maintype == "audio":
-        fp = open(fileToSend, "rb")
-        attachment = MIMEAudio(fp.read(), _subtype=subtype)
-        fp.close()
+    if not html is None:
+        msg.attach(MIMEText(html, 'html'))
     else:
-        fp = open(fileToSend, "rb")
-        attachment = MIMEBase(maintype, subtype)
-        attachment.set_payload(fp.read())
-        fp.close()
-        encoders.encode_base64(attachment)
+        msg.attach(MIMEText(text, 'plain'))
 
-    fileNameShort = fileToSend
-    if '\\' in fileToSend:
-        fileNameShort = fileToSend.split('\\')[-1]
-    else:
-        fileNameShort = fileToSend.split('/')[-1]
+    if not fileToSend is None:
+        ctype, encoding = mimetypes.guess_type(fileToSend)
+        if ctype is None or encoding is not None:
+            ctype = "application/octet-stream"
+        maintype, subtype = ctype.split("/", 1)
 
-    attachment.add_header("Content-Disposition", "attachment", filename=fileNameShort)
-    msg.attach(attachment)
+        if maintype == "text":
+            fp = open(fileToSend)
+            # Note: we should handle calculating the charset
+            attachment = MIMEText(fp.read(), _subtype=subtype)
+            fp.close()
+        elif maintype == "image":
+            fp = open(fileToSend, "rb")
+            attachment = MIMEImage(fp.read(), _subtype=subtype)
+            fp.close()
+        elif maintype == "audio":
+            fp = open(fileToSend, "rb")
+            attachment = MIMEAudio(fp.read(), _subtype=subtype)
+            fp.close()
+        else:
+            fp = open(fileToSend, "rb")
+            attachment = MIMEBase(maintype, subtype)
+            attachment.set_payload(fp.read())
+            fp.close()
+            encoders.encode_base64(attachment)
+
+        fileNameShort = fileToSend
+        if '\\' in fileToSend:
+            fileNameShort = fileToSend.split('\\')[-1]
+        else:
+            fileNameShort = fileToSend.split('/')[-1]
+
+        attachment.add_header("Content-Disposition", "attachment", filename=fileNameShort)
+        msg.attach(attachment)
     server = smtplib.SMTP("smtp.gmail.com:587")
     server.starttls()
     server.login(username, password)
