@@ -1,10 +1,10 @@
-import utility
+import config
 import data
 
-def __main__():
-    data_dir = r'/Users/facaiwang/Nutstore Files/WMLakefund/code/data/'
-    pfh = data.Public_Trading_History(data_dir)
+def main():
+    data_dir = config.DATA_ROOT
+    pfh = data.Public_Trading_History(data_dir, categories=('spot', 'futures'))
     pfh.pulling()
 
 if __name__ == "__main__":
-    __main__()
+    main()

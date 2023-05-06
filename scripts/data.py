@@ -8,7 +8,7 @@ import pybit
 import utility
 import os
 import sys
-
+from multiprocessing import Pool
 
 # old API
 def get_bar_data(symbol, interval, startTime, exchange='bybit'):
@@ -132,17 +132,10 @@ def query_orderbook_futures(symbol):
 # need to be finished
 def query_public_trading_history(category, symbol):
     url = "https://api.bybit.com/v5/market/recent-trade"
+    if category == 'futures':
+        category = 'linear'
     df = pd.DataFrame(
         list(json.loads(requests.get(url, params={"category": category, "symbol": symbol}).text)['result']['list']))
-    if df.shape[0] > 0:
-        df.index = [dt.datetime.fromtimestamp(int(x) / 1000) for x in df.time]
-        df = df.iloc[::-1]
-    return df
-# need to be finished
-def query_public_trading_history(symbol):
-    url = "https://api.bybit.com/v5/market/recent-trade"
-    df = pd.DataFrame(
-        list(json.loads(requests.get(url, params={"symbol": symbol}).text)['result']['list']))
     if df.shape[0] > 0:
         df.index = [dt.datetime.fromtimestamp(int(x) / 1000) for x in df.time]
         df = df.iloc[::-1]
@@ -232,19 +225,20 @@ class Orderbook_Futures(object):
         
         futures_info = query_basicinfo_futures()
         self.futures_universe = futures_info.name.unique()
-    
+
+    def helper(self, future_name):
+        time_now = dt.datetime.fromtimestamp(time.time())
+        raw_data_file_today = os.path.join(self.raw_data_dir,
+                                           '{}.parquet'.format(int(time.time()*1000)))
+        item0 = query_orderbook_futures(future_name).assign(collect_time=time_now)
+        item0.to_parquet(raw_data_file_today, engine='fastparquet')
+
     def _live_pull(self):
-        while True:
-            for future_name in self.futures_universe:
-                time_now = dt.datetime.fromtimestamp(time.time())
-                raw_data_file_today = os.path.join(self.raw_data_dir, '{}.parquet'.format(time_now.date().strftime('%Y%m%d')))
-                item0 = query_orderbook_futures(future_name).assign(
-                    collect_time = time_now)
-                if not os.path.isfile(raw_data_file_today):
-                    item0.to_parquet(raw_data_file_today, engine='fastparquet')
-                else:
-                    item0.to_parquet(raw_data_file_today, engine='fastparquet', append=True)       
-        
+
+        with Pool(4) as p:
+            p.map(self.helper, list(self.futures_universe))
+
+
         
     def pulling(self, max_attempts=5):
         attempts = 0
@@ -257,53 +251,62 @@ class Orderbook_Futures(object):
                 print("{} try failed.".format(attempts))
 
 
+
+
 # save public trading history spot+futures data
 class Public_Trading_History(object):
-    def __init__(self, data_dir):
-        # data save folder
-        raw_data_dir = os.path.join(data_dir, r'raw_public_trading_history')
-        if not os.path.exists(raw_data_dir):
-            print('Creating folder {}...'.format(raw_data_dir))
-            os.mkdir(raw_data_dir)
-        else:
-            print('Folder {} already existed'.format(raw_data_dir))
-        self.raw_data_dir = raw_data_dir
-        
-        spot_info = query_basicinfo_spot()
-        futures_info = query_basicinfo_futures()
-        universe = pd.concat([spot_info, futures_info]).name.unique()
-        self.universe = list(futures_info.name.unique())
-        
-        self.last_records = {}
+    def __init__(self, data_dir, categories=('spot',)):
+        # check save data folders
+        self.data_dir = data_dir
+        for category in categories:
+            os.makedirs(os.path.join(data_dir, 'raw_public_trading_history', category), exist_ok=True)
+
+        # create names universe
+        self.universe = dict()
+        for category in categories:
+            if category == 'spot':
+                spot_info = query_basicinfo_spot()
+                self.universe['spot'] = spot_info.name.unique()
+            if category == 'futures':
+                futures_info = query_basicinfo_futures()
+                self.universe['futures'] = futures_info.name.unique()
+
+        # create last records
+        self.last_records = {category:dict() for category in categories}
         
     def _init_pull(self):
         # prepare: create last records, save them to parquet file, 
         # don't need to check whether they already existed,
         # assume they are the very first records for each name.
-        for name in self.universe:
-            item0 = query_public_trading_history(name)
-            if item0.shape[0]>0:
-                self.last_records[name] = item0
-                raw_data_file_today = os.path.join(self.raw_data_dir, '{}.parquet'.format(dt.datetime.today().strftime('%Y%m%d')))
-                if not os.path.isfile(raw_data_file_today):
-                    item0.to_parquet(raw_data_file_today, engine='fastparquet')
-                else:
-                    item0.to_parquet(raw_data_file_today, engine='fastparquet', append=True)
+        for category, names in self.universe.items():
+            for name in names:
+                item0 = query_public_trading_history(category, name)
+                if item0.shape[0] > 0:
+                    self.last_records[category][name] = item0
+                    path_today = os.path.join(self.data_dir, 'raw_public_trading_histor', category, \
+                                              '{}.parquet'.format(dt.datetime.today().strftime('%Y%m%d')))
+                    if not os.path.isfile(path_today):
+                        item0.to_parquet(path_today, engine='fastparquet')
+                    else:
+                        item0.to_parquet(path_today, engine='fastparquet', append=True)
 
 
     def _live_pull(self):
         while True:
-            for name in self.last_records.keys():
-                current = query_public_trading_history(name)
-                raw_data_file_today = os.path.join(self.raw_data_dir, '{}.parquet'.format(dt.datetime.today().strftime('%Y%m%d')))
-                current_new = current[~current.execId.isin(self.last_records[name].execId)]
-                if not os.path.isfile(raw_data_file_today):
-                    current_new.to_parquet(raw_data_file_today, engine='fastparquet')
-                else:
-                    current_new.to_parquet(raw_data_file_today, engine='fastparquet', append=True)
-                self.last_records[name] = current
+
+            for category in self.last_records.keys():
+                for name in self.last_records[category].keys():
+                    current = query_public_trading_history(category, name)
+                    path_today = os.path.join(self.data_dir, 'raw_public_trading_histor', category,
+                                              '{}.parquet'.format(dt.datetime.today().strftime('%Y%m%d')))
+                    current_new = current[~current.execId.isin(self.last_records[category][name].execId)]
+                    if not os.path.isfile(path_today):
+                        current_new.to_parquet(path_today, engine='fastparquet')
+                    else:
+                        current_new.to_parquet(path_today, engine='fastparquet', append=True)
+                    self.last_records[category][name] = current
     
-    def pulling(self, max_attempts=5):       
+    def pulling(self, max_attempts=5):
         attempts = 0
         while attempts < max_attempts:
             try:
@@ -314,7 +317,7 @@ class Public_Trading_History(object):
             except:
                 attempts += 1
                 print('Init Pull {} try failed.'.format(attempts))
-        
+
         attempts = 0
         while attempts < max_attempts:
             try:
@@ -323,6 +326,8 @@ class Public_Trading_History(object):
             except:
                 attempts += 1
                 print("{} try failed.".format(attempts))
+
+
 
 
 
