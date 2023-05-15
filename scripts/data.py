@@ -246,6 +246,7 @@ class Orderbook_Futures(object):
         while attempts < max_attempts:
             try:
                 self._live_pull()
+                attempts = 0
             except:
                 attempts += 1
                 print("{} try failed.".format(attempts))
@@ -283,7 +284,7 @@ class Public_Trading_History(object):
                 item0 = query_public_trading_history(category, name)
                 if item0.shape[0] > 0:
                     self.last_records[category][name] = item0
-                    path_today = os.path.join(self.data_dir, 'raw_public_trading_histor', category, \
+                    path_today = os.path.join(self.data_dir, 'raw_public_trading_history', category, \
                                               '{}.parquet'.format(dt.datetime.today().strftime('%Y%m%d')))
                     if not os.path.isfile(path_today):
                         item0.to_parquet(path_today, engine='fastparquet')
@@ -297,7 +298,7 @@ class Public_Trading_History(object):
             for category in self.last_records.keys():
                 for name in self.last_records[category].keys():
                     current = query_public_trading_history(category, name)
-                    path_today = os.path.join(self.data_dir, 'raw_public_trading_histor', category,
+                    path_today = os.path.join(self.data_dir, 'raw_public_trading_history', category,
                                               '{}.parquet'.format(dt.datetime.today().strftime('%Y%m%d')))
                     current_new = current[~current.execId.isin(self.last_records[category][name].execId)]
                     if not os.path.isfile(path_today):
@@ -308,6 +309,7 @@ class Public_Trading_History(object):
     
     def pulling(self, max_attempts=5):
         attempts = 0
+
         while attempts < max_attempts:
             try:
                 print('Init Pull started.')
@@ -323,6 +325,7 @@ class Public_Trading_History(object):
             try:
                 print('Live pulling......')
                 self._live_pull()
+                attempts = 0
             except:
                 attempts += 1
                 print("{} try failed.".format(attempts))
