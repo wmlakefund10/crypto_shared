@@ -329,6 +329,7 @@ class Public_Trading_History(object):
             except:
                 attempts += 1
                 print("{} try failed.".format(attempts))
+                time.sleep(5)
 
 
 
