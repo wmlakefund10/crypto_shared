@@ -246,6 +246,7 @@ class Orderbook_Futures(object):
         while attempts < max_attempts:
             try:
                 self._live_pull()
+                attempts = 0
             except:
                 attempts += 1
                 print("{} try failed.".format(attempts))
@@ -308,6 +309,7 @@ class Public_Trading_History(object):
     
     def pulling(self, max_attempts=5):
         attempts = 0
+
         while attempts < max_attempts:
             try:
                 print('Init Pull started.')
@@ -323,9 +325,11 @@ class Public_Trading_History(object):
             try:
                 print('Live pulling......')
                 self._live_pull()
+                attempts = 0
             except:
                 attempts += 1
                 print("{} try failed.".format(attempts))
+                time.sleep(5)
 
 
 
