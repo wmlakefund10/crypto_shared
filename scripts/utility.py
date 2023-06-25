@@ -93,6 +93,10 @@ def dt_to_millsec(date, dateformat='%Y-%m-%d'):
 
 def gfun_df(nname, df, tgt_col, gb, f, cond=[], tgt_arr=[]):
     df[nname] = np.nan
+    if type(gb) == zip:
+        idx = df.index
+        gb = pd.Series(gb, index=idx)
+        gb = gb.map(lambda x: '|'.join([str(i) for i in x]))
     if 0 < len(tgt_arr):
         df[tgt_col] = tgt_arr
     if len(cond) > 0:
@@ -115,6 +119,10 @@ def xrank(list_pandas, n):
     if all(list_pandas.isnull()):
         return list_pandas
     return pd.qcut(list_pandas, n, labels=False)
+
+def xbar(l_pds, buc):
+    buc = [-np.inf] + buc + [np.inf]
+    return pd.cut(l_pds, buc, labels=False)
 
 def rerank(list_pandas):
     s = list_pandas.notnull().sum()
@@ -257,15 +265,24 @@ def pnldetails(alldata, wtcol, ret_col='fret_15m', sret_col=None, tcost=0, frequ
         tab_interval['pnl_ac(%)'].fillna(0).cumsum().plot(title = "PnL", color = "red", figsize = (15,6))
     return
 
+
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
-def cgma(df,
+def cgma(df, 
          gb,
          wtcol='',
-         cn=[],
+         signcol='',
+         cc=0.5,
+         cn=[], 
          rmod='fperf',
          ofun_dict={},
-         ret_ds=[]):
+         ret_ds=[],
+         cmap='RdYlGn',
+         startcol=0,
+         zoomin_ret=None,
+         clip_ret=None,
+         wpds=pd.Series([], dtype=float),
+         spds=pd.Series([], dtype=float)):
     if len(ret_ds) == 0:
         if rmod == 'fperf':
             ret_ds = [1,2,3,5,12,24,48,24*7]
@@ -288,21 +305,106 @@ def cgma(df,
     if wtcol=='':
         df.loc[:,'ones'] = 1
         wtcol = 'ones'
-    res_tab = df.groupby(gb).apply(multi_analysis, wtcol, cn, ofun_dict, rmod, ret_ds)
+    res_tab = df.groupby(gb).apply(multi_analysis, wtcol, signcol, cn, ofun_dict, cc, rmod, ret_ds, wpds, spds)
     if wtcol == 'ones':
         df = df.drop(columns=['ones'])
     index_cols = [i for i in list(res_tab.index.names) if i]
     res_tab = res_tab.reset_index()
     del res_tab['level_1']
     res_tab.set_index(index_cols)
-    return res_tab
+    return add_color(res_tab, cmap, startcol, zoomin_ret, clip_ret)
 
-def multi_analysis(df,
+
+def add_color(res_tab,
+              cmap='RdYlGn',
+              startcol=0,
+              zoomin_ret=None,
+              clip_ret=None):
+    colnames = list(res_tab.columns)
+    format_dict = {}
+    m_subset = []
+    for cc in colnames:
+        if (type(cc) == int) | (str(cc).startswith('ret_')):
+            format_dict[cc] = '{:.3%}'
+        elif (cc == 'vol') | ('vol' in cc):
+            format_dict[cc] = '{:.1%}'
+        elif (cc in ['adv', 'mcap', 'cnt']) | ('usd' in cc):
+            format_dict[cc] = '{:20,.0f}'
+    if clip_ret:
+        low_bound, high_bound = clip_ret if not type(clip_ret) in [float, int] else (-clip_ret, clip_ret)
+        zoomin_ret = zoomin_ret[0] if type(zoomin_ret) == list else zoomin_ret
+        if not zoomin_ret or str(zoomin_ret).isdigit():
+            ret_cols = [cc for cc in colnames if ((type(cc) == int) | (str(cc).startswith('ret_')))]
+        else:
+            ret_cols = [zoomin_ret]
+        res_tab.loc[:, ret_cols] = res_tab.loc[:, ret_cols].clip(low_bound, high_bound)
+    
+    if zoomin_ret:
+        try:
+            if type(zoomin_ret) != list:
+                zoomin_ret = [zoomin_ret]
+            m_subset = res_tab.unstack().loc[:, zoomin_ret]
+            format_dict_midx = {
+                midx: format_dict[level_col]
+                for level_col in format_dict
+                for midx in [col for col in m_subset.columns if (col[0] == level_col) or (str(col[0]) == level_col)]
+            }
+            return m_subset.style.background_gradient(cmap=cmap, axis=None).format(format_dict_midx)
+        except:
+            print('{} is not in column names'.format(zoomin_ret))
+            return
+    else:
+        if not startcol in colnames:
+            ll = [cc for cc in colnames if type(cc) == int]
+            if 0 < len(ll):
+                startcol = min(ll)
+        if startcol in colnames:
+            ii = colnames.index(startcol)
+            m_subset = colnames[(ii + 1):] if (startcol == 0) else colnames[ii:]
+        m_subset = m_subset + [x for x in colnames if str(x).startswith('ret_')]
+        
+        if 0 < len(m_subset):
+            return res_tab.style.background_gradient(cmap=cmap, axis=None, subset=m_subset).format(format_dict)
+        else:
+            return res_tab.style.format(format_dict)
+        
+
+def wavg(df,
+         tgt,
+         advfac=0.01,
+         usdfac=1e6,
+         cc=0.5,
+         wtcol='',
+         signcol='',
+         wpds=pd.Series([], dtype=float),
+         spds=pd.Series([], dtype=float)):
+    if len(spds) == 0:
+        if signcol == '':
+            spds = 1.0
+        else:
+            spds = np.sign(df[signcol])
+    if len(wpds) == 0:
+        wpds = abs(df[wtcol])
+#         if wtcol == '':
+#             wpds = np.minimum(usdfac, advfac * df.adv)
+#         elif wtcol == '1':
+#             wpds = pd.Series(len(df) * [1.0])
+#         else:
+#             wpds = abs(df[wtcol])
+    wpds[df[tgt].isnull()] = np.nan
+    return np.nansum(df[tgt].clip(-cc,cc) * spds * wpds) / np.nansum(wpds)
+
+
+def multi_analysis(df, 
                    wtcol='',
-                   cn=[],
-                   ofun_dict={},
-                   rmod='fperf',
-                   ret_ds=[1,3,5,10,15,20]):
+                   signcol='',
+                   cn=[], 
+                   ofun_dict={}, 
+                   cc=0.5,
+                   rmod='fperf', 
+                   ret_ds=[1,3,5,10,15,20],
+                   wpds=pd.Series([], dtype=float),
+                   spds=pd.Series([], dtype=float)):
     basic_fun_dict = {'cnt': lambda df: len(df), 'vol': lambda df: df['vol'].median(), 'adv': lambda df: df['adv'].median()}
     basic_fun_dict.update(ofun_dict)
     keys = []
@@ -322,13 +424,23 @@ def multi_analysis(df,
         for nd in ret_ds:
             keys.append(nd)
             if nd == 0:
-                ret = np.nansum(df['zperf'].clip(-0.5,0.5) * df[wtcol].abs()) / np.nansum(df[wtcol].abs())
+                if signcol!='' or wtcol!='':
+                    ret = wavg(df, 'zperf', cc=cc, wtcol=wtcol, signcol=signcol)
+                else:
+                    ret = np.nansum(df['zperf'].clip(-cc,cc) * df[wtcol].abs()) / np.nansum(df[wtcol].abs())
             elif rmod == 'fret':
-                ret = np.nansum(df[rmod+'_'+str(nd)+'m'].clip(-0.5,0.5) * df[wtcol].abs()) / np.nansum(df[wtcol].abs())
+                if signcol!='' or wtcol!='':
+                    ret = wavg(df, rmod+'_'+str(nd)+'m', cc=cc, wtcol=wtcol, signcol=signcol)
+                else:
+                    ret = np.nansum(df[rmod+'_'+str(nd)+'m'].clip(-cc,cc) * df[wtcol].abs()) / np.nansum(df[wtcol].abs())
             else:
-                ret = np.nansum(df[rmod+'_'+str(nd)].clip(-0.5,0.5) * df[wtcol].abs()) / np.nansum(df[wtcol].abs())
+                if signcol!='' or wtcol!='':
+                    ret = wavg(df, rmod+'_'+str(nd), cc=cc, wtcol=wtcol, signcol=signcol)
+                else:
+                    ret = np.nansum(df[rmod+'_'+str(nd)].clip(-cc,cc) * df[wtcol].abs()) / np.nansum(df[wtcol].abs())
             ress.append(ret)
     return pd.DataFrame({keys[i]:[ress[i]] for i in range(len(keys))})
+
 
 def getIC(alldata, wtcol, retcol='fperf_1', absret=False):
     gfun_df(f'alpha_{wtcol}', alldata, wtcol, 'date', lambda x: rerank(x), cond=alldata.inuniv)
@@ -340,6 +452,19 @@ def getIC(alldata, wtcol, retcol='fperf_1', absret=False):
         ic = alldata[[f'alpha_{wtcol}', retcol]].corr().iloc[0,1]
     del alldata[f'alpha_{wtcol}']
     return ic
+
+def calcbperf_binance(alldata, rets=[1,2,3,5,6,10,12,15,20,24]):
+    gfun_df('zperf', alldata, 'close', 'symbol', lambda x: (x.shift(-1)-x)/x)
+#     for i in rets:
+#         gfun_df(f'fperf_{i}', alldata, 'close', 'symbol', lambda x: (x.shift(-(i+1))-x.shift(-1))/x.shift(-1))
+    for i in rets:
+        gfun_df(f'bperf_{i}', alldata, 'close', 'symbol', lambda x: (x-x.shift(i))/x.shift(i))
+    return alldata
+
+def calcfperf_binance(alldata, zperf_col, rets=[1,2,3,4,5,6,10,12,15,20,24,48,72,96,120,144,168]):
+    for i in rets:
+        gfun_df(f'fperf_{i}', alldata, zperf_col, 'symbol', lambda x: x.shift(-i).rolling(window=i).sum())
+    return alldata
 
 def createRiskFactors(alldata):
     def seas30(x):
